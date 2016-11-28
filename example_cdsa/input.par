@@ -3,13 +3,13 @@
 # Mesh size 
 500 500 500
 # P-velocity model 
-"/home/kluu/Code/Fortran/EvoSeis/example_cdsa/velp3d.bin"
+"./example_cdsa/velp3d.bin"
 # S-velocity model 
-"/home/kluu/Code/Fortran/EvoSeis/example_cdsa/vels3d.bin"
+"./example_cdsa/vels3d.bin"
 # Stations file 
-"/home/kluu/Code/Fortran/EvoSeis/example_cdsa/stations.txt"
+"./example_cdsa/stations.txt"
 # Arrival times file 
-"/home/kluu/Code/Fortran/EvoSeis/example_cdsa/tobs.txt"
+"./example_cdsa/tobs.txt"
 # Reference date used to create data (year / month / day) 
 2012 1 1
 # Z coordinates of stations (0: depth, 1: elevation) 
@@ -17,7 +17,7 @@
 # Probabilistic formulation 
 0
 # Uncertainties file 
-"/home/kluu/Code/Fortran/EvoSeis/example_cdsa/sigma.txt"
+"./example_cdsa/sigma.txt"
 # P picking uncertainty boundaries (in ms, spmin / spmax) 
 0.5 5.0
 # S picking uncertainty boundaries (in ms, ssmin / ssmax) 

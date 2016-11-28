@@ -3,13 +3,13 @@
 # Mesh size 
 10.0 10.0 10.0
 # P-velocity model 
-"/home/kluu/Code/Fortran/EvoLoc/example/velp3d.bin"
+"./example/velp3d.bin"
 # S-velocity model 
-"/home/kluu/Code/Fortran/EvoLoc/example/vels3d.bin"
+"./example/vels3d.bin"
 # Stations file 
-"/home/kluu/Code/Fortran/EvoLoc/example/stations.txt"
+"./example/stations.txt"
 # Arrival times file 
-"/home/kluu/Code/Fortran/EvoLoc/example/tobs.txt"
+"./example/tobs.txt"
 # Reference date used to create data (year / month / day) 
 0 0 0
 # Z coordinates of stations (0: depth, 1: elevation) 
@@ -17,7 +17,7 @@
 # Probabilistic formulation 
 0
 # Uncertainties file 
-"/home/kluu/Code/Fortran/EvoLoc/example/sigma.txt"
+"./example/sigma.txt"
 # P picking uncertainty boundaries (in ms, spmin / spmax) 
 0.5 5.0
 # S picking uncertainty boundaries (in ms, ssmin / ssmax) 
