@@ -10,25 +10,81 @@
 !     PSL - Research University
 !
 ! Last updated
-!     2016-11-27 23:11
+!     2016-12-21 15:11
 !
 ! Notes
 !-----------------------------------------------------------------------
 ! All attributes are public to ease implementation: Fortran does not
 ! allow (yet?) accessing encapsulated attributes through methods.
-!
-! TODO
-!-----------------------------------------------------------------------
-! Add magnitude to object Source.
 !=======================================================================
 
 module evoseis
 
   use omp_lib
-  use forlab, only: IPRE, RPRE, File, horzcat, interp3, linspace, &
+  use forlab, only: IPRE, RPRE, pi, File, horzcat, interp3, linspace, &
     deg2utm, utm2deg, datenum, datestr
-  use fftpack, only: fft, ifft
+  use fftpack, only: fft, ifft, ifftshift
   use optimizers, only: optifit, optifunc, cpso, de
+
+!=======================================================================
+! Object Wavelet
+!=======================================================================
+
+  type Wavelet
+    ! Length (in s)
+    real(kind = RPRE), public :: length
+    ! Sampling rate (in Hz)
+    real(kind = RPRE), public :: sampling_rate
+    ! Form (0: triangle, 1: ricker)
+    integer(kind = IPRE), public :: form
+    ! Number of points
+    integer(kind = IPRE), public :: npts
+    ! Wavelet in time domain
+    real(kind = RPRE), dimension(:), allocatable, public :: data
+    ! Wavelet in frequency domain
+    complex(kind = RPRE), dimension(:), allocatable, public :: fdata
+  contains
+    procedure, public, pass :: triangle, ricker
+    procedure, private, pass :: model_wavelet
+    generic, public :: model => model_wavelet
+  end type Wavelet
+
+  interface Wavelet
+    module procedure init_Wavelet
+  end interface Wavelet
+  public :: Wavelet
+  private :: init_Wavelet
+
+!=======================================================================
+! Object Waveform
+!=======================================================================
+
+  type Waveform
+    ! Length (in s)
+    real(kind = RPRE), public :: length
+    ! Sampling rate (in Hz)
+    real(kind = RPRE), public :: sampling_rate
+    ! Unit (0: m, 1: m/s, 2: m/s²)
+    integer(kind = IPRE), public :: unit
+    ! Number of points
+    integer(kind = IPRE), public :: npts
+    ! Inclination and azimuth (in degrees)
+    real(kind = RPRE), public :: inclination, azimuth
+    ! Reference frame (ZNE or LQT)
+    character(len = 3), public :: ref
+    ! Traces
+    real(kind = RPRE), dimension(:), allocatable :: comp1, comp2, comp3
+  contains
+    procedure, public, pass :: anelastic, zne2lqt, lqt2zne
+    procedure, private, pass :: model_waveform
+    generic, public :: model => model_waveform
+  end type Waveform
+
+  interface Waveform
+    module procedure init_Waveform
+  end interface Waveform
+  public :: Waveform
+  private :: init_Waveform
 
 !=======================================================================
 ! Object Location
@@ -70,6 +126,8 @@ module evoseis
 !=======================================================================
 
   type, extends(Hypocenter) :: Source
+    ! Seismic moment
+    real(kind = RPRE), public :: seismic_moment
     ! Moment tensor
     real(kind = RPRE), dimension(:), allocatable, public :: moment_tensor
   end type Source
@@ -150,6 +208,8 @@ module evoseis
   type Vel3D
     ! Earth velocity model (in m/s)
     real(kind = RPRE), dimension(:,:,:), pointer, public :: model => null()
+    ! Quality factor
+    real(kind = RPRE), public :: qfactor
     ! Grid size
     integer(kind = IPRE), public :: nx, ny, nz
     ! Mesh size (in meters)
@@ -424,9 +484,10 @@ contains
 ! Object Source methods
 !=======================================================================
 
-  type(Source) function init_Source(x, y, z, eventid, origin_time, moment_tensor)
+  type(Source) function init_Source(x, y, z, eventid, origin_time, &
+                                    seismic_moment, moment_tensor)
     integer(kind = IPRE), intent(in), optional :: eventid
-    real(kind = RPRE), intent(in), optional :: x, y, z
+    real(kind = RPRE), intent(in), optional :: x, y, z, seismic_moment
     real(kind = 8), intent(in), optional :: origin_time
     real(kind = RPRE), dimension(:), intent(in), optional :: moment_tensor
 
@@ -435,6 +496,7 @@ contains
     if (present(z)) init_Source % z = z
     if (present(eventid)) init_Source % eventid = eventid
     if (present(origin_time)) init_Source % origin_time = origin_time
+    if (present(seismic_moment)) init_Source % seismic_moment = seismic_moment
     if (present(moment_tensor)) init_Source % moment_tensor = moment_tensor
     return
   end function init_Source
@@ -443,9 +505,9 @@ contains
 ! Object Cluster methods
 !=======================================================================
 
-  type(Cluster) function init_Cluster(nsrc, X, Y, Z, EID, T0, MT)
+  type(Cluster) function init_Cluster(nsrc, X, Y, Z, EID, T0, SM, MT)
     integer(kind = IPRE), intent(in) :: nsrc
-    real(kind = RPRE), dimension(:), intent(in), optional :: X, Y, Z, T0
+    real(kind = RPRE), dimension(:), intent(in), optional :: X, Y, Z, T0, SM
     integer(kind = IPRE), dimension(:), intent(in), optional :: EID
     real(kind = RPRE), dimension(:,:), intent(in), optional :: MT
     integer(kind = IPRE) :: j
@@ -457,6 +519,7 @@ contains
     if (present(Z)) init_Cluster % sources(:) % z = Z
     if (present(EID)) init_Cluster % sources(:) % eventid = EID
     if (present(T0)) init_Cluster % sources(:) % origin_time = T0
+    if (present(SM)) init_Cluster % sources(:) % seismic_moment = SM
     if (present(MT)) then
       do j = 1, nsrc
         init_Cluster % sources(j) % moment_tensor(:) = MT(j,:)
@@ -606,14 +669,14 @@ contains
 
   type(Station) function init_Station(x, y, z, tobs, sigma, ttgrid)
     real(kind = RPRE), intent(in) :: x, y, z
-    real(kind = RPRE), dimension(:,:), intent(in) :: tobs
+    real(kind = RPRE), dimension(:,:), intent(in), optional :: tobs
     real(kind = RPRE), dimension(:,:), intent(in), optional :: sigma
     real(kind = RPRE), dimension(:,:,:,:), intent(in), optional :: ttgrid
 
     init_Station % x = x
     init_Station % y = y
     init_Station % z = z
-    init_Station % arrivals = tobs
+    if (present(tobs)) init_Station % arrivals = tobs
     if (present(sigma)) init_Station % uncertainties = sigma
     if (present(ttgrid)) init_Station % ttgrid = ttgrid(:,:,:,:)
     return
@@ -707,7 +770,7 @@ contains
 
   type(Network) function init_Network(X, Y, Z, tobs, sigma, ttgrids)
     real(kind = RPRE), dimension(:), intent(in) :: X, Y, Z
-    real(kind = RPRE), dimension(:,:), intent(in) :: tobs
+    real(kind = RPRE), dimension(:,:), intent(in), optional :: tobs
     real(kind = RPRE), dimension(:,:), intent(in), optional :: sigma
     real(kind = RPRE), dimension(:,:,:,:,:), intent(in), optional :: ttgrids
     integer(kind = IPRE) :: k, nstat, nobs, nev
@@ -715,20 +778,28 @@ contains
       sigmap, sigmas
 
     nstat = size(X)
-    nobs = size(tobs, 1)
-    nev = nobs / nstat
     init_Network % nstat = nstat
     allocate(init_Network % stations(nstat))
 
-    tobsp = reshape(tobs(:,1), [ nstat, nev ])
-    tobss = reshape(tobs(:,2), [ nstat, nev ])
+    if (present(tobs)) then
+      nobs = size(tobs, 1)
+      nev = nobs / nstat
 
-    do k = 1, nstat
-      init_Network % stations(k) = Station(X(k), Y(k), Z(k), &
-                                           horzcat(tobsp(k,:), tobss(k,:)))
+      tobsp = reshape(tobs(:,1), [ nstat, nev ])
+      tobss = reshape(tobs(:,2), [ nstat, nev ])
+
       if (present(sigma)) then
         sigmap = reshape(sigma(:,1), [ nstat, nev ])
         sigmas = reshape(sigma(:,2), [ nstat, nev ])
+      end if
+    end if
+
+    do k = 1, nstat
+      init_Network % stations(k) = Station(X(k), Y(k), Z(k))
+      if (present(tobs)) then
+        init_Network % stations(k) % arrivals = horzcat(tobsp(k,:), tobss(k,:))
+      end if
+      if (present(sigma)) then
         init_Network % stations(k) % uncertainties = horzcat(sigmap(k,:), sigmas(k,:))
       end if
       if (present(ttgrids)) then
@@ -787,9 +858,10 @@ contains
 ! Object Vel3D methods
 !=======================================================================
 
-  type(Vel3D) function init_Vel3D(model, dx, dy, dz)
+  type(Vel3D) function init_Vel3D(model, dx, dy, dz, q)
     real(kind = RPRE), dimension(:,:,:), target, intent(in) :: model
     real(kind = RPRE), intent(in) :: dx, dy, dz
+    real(kind = RPRE), intent(in), optional :: q
 
     init_Vel3D % model => model
     init_Vel3D % dx = dx
@@ -798,7 +870,292 @@ contains
     init_Vel3D % nx = size(model,2)
     init_Vel3D % ny = size(model,3)
     init_Vel3D % nz = size(model,1)
+    if (present(q)) init_Vel3D % qfactor = q
     return
   end function init_Vel3D
+
+!=======================================================================
+! Object Wavelet methods
+!=======================================================================
+
+  type(Wavelet) function init_Wavelet(length, sampling_rate, form, &
+                                      data, fdata)
+    real(kind = RPRE), intent(in) :: length, sampling_rate
+    integer(kind = IPRE), intent(in), optional :: form
+    real(kind = RPRE), dimension(:), intent(in), optional :: data
+    complex(kind = RPRE), dimension(:), intent(in), optional :: fdata
+
+    init_Wavelet % length = length
+    init_Wavelet % sampling_rate = sampling_rate
+    init_Wavelet % npts = int(length * sampling_rate)
+    init_Wavelet % form = 0
+    if (present(form)) init_Wavelet % form = form
+    if (present(data)) init_Wavelet % data = data
+    if (present(fdata)) init_Wavelet % fdata = fdata
+    return
+  end function init_Wavelet
+
+  subroutine triangle(self, duration, tshift)
+    class(Wavelet), intent(inout) :: self
+    real(kind = RPRE), intent(in) :: duration
+    real(kind = RPRE), intent(in), optional :: tshift
+    integer(kind = IPRE) :: i
+    real(kind = RPRE) :: opt_tshift
+    real(kind = RPRE), dimension(:), allocatable :: at
+
+    opt_tshift = 0.0d0
+    if (present(tshift)) opt_tshift = tshift
+
+    at = [ ( i, i = 0, self % npts - 1 ) ] / self % sampling_rate
+    allocate(self % data(self % npts))
+    self % data = 0.0d0
+    do i = 1, self % npts
+      if ( 0. .le. at(i) - opt_tshift &
+           .and. at(i) - opt_tshift .lt. 0.5 * duration ) then
+        self % data(i) = 2. * ( at(i) - opt_tshift ) / duration
+      elseif ( 0.5 * duration .le. at(i) - opt_tshift &
+               .and. at(i) - opt_tshift .le. duration ) then
+        self % data(i) = -2. * ( at(i) - opt_tshift ) / duration + 2.
+      end if
+    end do
+    self % fdata = fft(self % data)
+    return
+  end subroutine triangle
+
+  subroutine ricker(self, f0, tshift)
+    class(Wavelet), intent(inout) :: self
+    real(kind = RPRE), intent(in) :: f0
+    real(kind = RPRE), intent(in), optional :: tshift
+    integer(kind = IPRE) :: i
+    real(kind = RPRE) :: opt_tshift, tau
+    real(kind = RPRE), dimension(:), allocatable :: at, tmp
+
+    opt_tshift = 0.0d0
+    if (present(tshift)) opt_tshift = tshift
+
+    at = [ ( i, i = 0, self % npts - 1 ) ] / self % sampling_rate
+    tau = 1. / f0
+    tmp = pi*pi * f0*f0 * (at-tau-opt_tshift)*(at-tau-opt_tshift)
+    self % data = ( 1.0d0 - 2.0d0 * tmp ) * exp(-tmp)
+    self % fdata = fft(self % data)
+    return
+  end subroutine ricker
+
+  subroutine model_wavelet(self, par, tshift)
+    class(Wavelet), intent(inout) :: self
+    real(kind = RPRE), intent(in) :: par
+    real(kind = RPRE), intent(in), optional :: tshift
+    real(kind = RPRE) :: opt_tshift
+
+    opt_tshift = 0.0d0
+    if (present(tshift)) opt_tshift = tshift
+
+    select case(self % form)
+    case(0)
+      call self % triangle(par, opt_tshift)
+    case(1)
+      call self % ricker(par, opt_tshift)
+    end select
+    return
+  end subroutine model_wavelet
+
+!=======================================================================
+! Object Waveform methods
+!=======================================================================
+
+  type(Waveform) function init_Waveform(length, sampling_rate, unit, &
+                                        ref, comp1, comp2, comp3)
+    real(kind = RPRE), intent(in) :: length, sampling_rate
+    integer(kind = IPRE), intent(in), optional :: unit
+    character(len = 3), intent(in), optional :: ref
+    real(kind = RPRE), dimension(:), intent(in), optional  :: comp1, comp2, comp3
+
+    init_Waveform % length = length
+    init_Waveform % sampling_rate = sampling_rate
+    init_Waveform % npts = int(length * sampling_rate)
+    init_Waveform % unit = unit
+    if (present(ref)) init_Waveform % ref = ref
+    if (present(comp1)) init_Waveform % comp1 = comp1
+    if (present(comp2)) init_Waveform % comp2 = comp2
+    if (present(comp3)) init_Waveform % comp3 = comp3
+    return
+  end function init_Waveform
+
+  function anelastic(self, t, q)
+    complex(kind = RPRE), dimension(:), allocatable :: anelastic
+    class(Waveform), intent(in) :: self
+    real(kind = RPRE), intent(in) :: t, q
+    integer(kind = RPRE) :: i
+    real(kind = RPRE) :: fny, wny, df
+    real(kind = RPRE), dimension(:), allocatable :: af, w, rp, ip
+
+    fny = 0.5d0 * self % sampling_rate
+    wny = 2.0d0 * pi * fny
+    df = self % sampling_rate / self % npts
+    af =  df * [ ( i, i = int(-self % npts / 2), int(self % npts / 2 - 1) ) ]
+    w = 2.0d0 * pi * ifftshift(af)
+
+    rp = -0.5d0 * abs(w(2:)) * t / q
+    ip = w(2:) * t / pi / q * ( log(abs(w(2:))/wny) - 2.0d0 )
+    allocate(anelastic(self % npts))
+    anelastic(1) = cmplx(1.0d0, 0.0d0, RPRE)
+    anelastic(2:) = exp(cmplx(rp, ip, RPRE))
+    return
+  end function anelastic
+
+  subroutine model_waveform(self, velp, vels, density, src, rcv, wave, par)
+    class(Waveform), intent(inout) :: self
+    type(Vel3D), intent(in) :: velp, vels
+    type(Source), intent(in) :: src
+    type(Station), intent(in) :: rcv
+    type(Wavelet), intent(in) :: wave
+    real(kind = RPRE), intent(in) :: density, par
+    integer(kind = IPRE) :: i
+    real(kind = RPRE) :: fny, df, M0, M11, M12, M13, M22, M23, M33, &
+      dist, tp, ts, gs, inc, az, lqt(3, 3), divp, divs
+    real(kind = RPRE), dimension(:), allocatable :: af
+    real(kind = RPRE), dimension(:,:), allocatable :: MT
+    complex(kind = RPRE), dimension(:), allocatable :: iw, Sp, Ss, Ap, As, &
+      Up, Usv, Ush
+
+    ! Frequency axis
+    !================
+    fny = 0.5d0 * self % sampling_rate
+    df = self % sampling_rate / real(self % npts)
+    af = df * [ ( i, i = int(-self % npts / 2), int(self % npts / 2 - 1) ) ]
+    iw = cmplx(0.0d0, 2.0d0 * pi * ifftshift(af), RPRE)
+
+    ! Moment tensor
+    !===============
+    M0 = src % seismic_moment
+    M11 = src % moment_tensor(1)
+    M12 = src % moment_tensor(2)
+    M13 = src % moment_tensor(3)
+    M22 = src % moment_tensor(4)
+    M23 = src % moment_tensor(5)
+    M33 = src % moment_tensor(6)
+    MT = reshape( [ M11, M12, M13, &
+                    M12, M22, M23, &
+                    M13, M23, M33 ], shape = [ 3, 3 ])
+
+    ! Compute traveltimes
+    !=====================
+    dist = (src % x - rcv % x)**2 + (src % y - rcv % y)**2 + (src % z - rcv % z)**2
+    dist = sqrt(dist)
+    tp = dist / velp % model(1, 1, 1)
+    ts = dist / vels % model(1, 1, 1)
+
+    ! Wavelet in frequency domain
+    !=============================
+    Sp = wave % fdata * exp(-iw * tp)
+    Ss = wave % fdata * exp(-iw * ts)
+
+    ! Compute geometrical spreading
+    !===============================
+    gs = 1.0d0 / dist
+
+    ! LQT base
+    !==========
+    self % inclination = atan2(rcv % x - src % x, rcv % z - src % z) * 180. / pi
+    self % azimuth = atan2(rcv % y - src % y, rcv % x - src % x) * 180. / pi
+    inc = self % inclination * pi / 180.
+    az = self % azimuth * pi / 180.
+    lqt(:,1) = [ sin(inc) * cos(az), &
+                 sin(inc) * sin(az), &
+                 cos(inc) ]
+    lqt(:,2) = [ cos(inc) * cos(az), &
+                 cos(inc) * sin(az), &
+                 -sin(inc) ]
+    lqt(:,3) = [ -sin(az), &
+                 cos(az), &
+                 real(0., RPRE) ]
+
+    ! Compute denominators
+    !======================
+    divp = 1. / ( 4. * pi * density * velp % model(1, 1, 1)**3 )
+    divs = 1. / ( 4. * pi * density * vels % model(1, 1, 1)**3 )
+
+    ! Anelastic attenuation
+    !=======================
+    Ap = self % anelastic(tp, velp % qfactor)
+    As = self % anelastic(ts, vels % qfactor)
+
+    ! Displacements
+    !===============
+    Up = dot_product(matmul(lqt(:,1), MT), lqt(:,1)) * M0 * gs * divp * Sp
+    Usv = dot_product(matmul(lqt(:,2), MT), lqt(:,1)) * M0 * gs * divs * Ss
+    Ush = dot_product(matmul(lqt(:,3), MT), lqt(:,1)) * M0 * gs * divs * Ss
+
+    ! Model waveforms in LQT base
+    !=============================
+    self % ref = "LQT"
+    self % comp1 = real(ifft(iw**self % unit * Ap * Up))
+    self % comp2 = real(ifft(iw**self % unit * As * Usv))
+    self % comp3 = real(ifft(iw**self % unit * As * Ush))
+
+    return
+  end subroutine model_waveform
+
+  subroutine zne2lqt(self)
+    class(Waveform), intent(inout) :: self
+    real(kind = RPRE) :: i, baz
+    real(kind = RPRE), dimension(:), allocatable :: l, q, t
+
+    select case(self % ref)
+    case("ZNE")
+      i = self % inclination * pi / 180.
+      baz = 2. * pi - self % azimuth * pi / 180.
+
+      l = self % comp1 * cos(i) &
+          - self % comp2 * sin(i) * cos(baz) &
+          - self % comp3 * sin(i) * sin(baz)
+      q = self % comp1 * sin(i) &
+          + self % comp2 * cos(i) * cos(baz) &
+          + self % comp3 * cos(i) * sin(baz)
+      t = self % comp2 * sin(baz) &
+          - self % comp3 * cos(baz)
+
+      self % ref = "LQT"
+      self % comp1 = l
+      self % comp2 = q
+      self % comp3 = t
+    case("LQT")
+      print *, "Warning: in zne2lqt, waveforms already in LQT."
+    case default
+      print *, "Error: in zne2lqt, no waveform modelled."
+    end select
+    return
+  end subroutine zne2lqt
+
+  subroutine lqt2zne(self)
+    class(waveform), intent(inout) :: self
+    real(kind = RPRE) :: i, baz
+    real(kind = RPRE), dimension(:), allocatable :: z, n, e
+
+    select case(self % ref)
+    case("LQT")
+      i = self % inclination * pi / 180.
+      baz = 2. * pi - self % azimuth * pi / 180.
+
+      z = self % comp1 * cos(i) &
+          + self % comp2 * sin(i)
+      n = - self % comp1 * sin(i) * cos(baz) &
+          + self % comp2 * cos(i) * cos(baz) &
+          + self % comp3 * sin(baz)
+      e = - self % comp1 * sin(i) * sin(baz) &
+          + self % comp2 * cos(i) * sin(baz) &
+          - self % comp3 * cos(baz)
+
+      self % ref = "ZNE"
+      self % comp1 = z
+      self % comp2 = n
+      self % comp3 = e
+    case("ZNE")
+      print *, "Warning: in lqt2zne, waveforms already in ZNE."
+    case default
+      print *, "Error: in lqt2zne, no waveform modelled."
+    end select
+    return
+  end subroutine lqt2zne
 
 end module evoseis
