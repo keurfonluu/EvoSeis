@@ -1,44 +1,44 @@
-# Grid size 
+# Grid size
 60 30 40
-# Mesh size 
+# Mesh size
 10.0 10.0 10.0
-# P-velocity model 
+# P-velocity model
 "./example/velp3d.bin"
-# S-velocity model 
+# S-velocity model
 "./example/vels3d.bin"
-# Stations file 
+# Stations file
 "./example/stations.txt"
-# Arrival times file 
+# Arrival times file
 "./example/tobs.txt"
-# Reference date used to create data (year / month / day) 
+# Reference date used to create data (year / month / day)
 0 0 0
-# Z coordinates of stations (0: depth, 1: elevation) 
+# Z coordinates of stations (0: depth, 1: elevation)
 0
-# Probabilistic formulation 
+# Probabilistic formulation
 0
-# Uncertainties file 
+# Uncertainties file
 "./example/sigma.txt"
-# P picking uncertainty boundaries (in ms, spmin / spmax) 
+# P picking uncertainty boundaries (in ms, spmin / spmax)
 0.5 5.0
-# S picking uncertainty boundaries (in ms, ssmin / ssmax) 
+# S picking uncertainty boundaries (in ms, ssmin / ssmax)
 1.0 10.0
 # Coordinates unit (0: meter, 1: degree) 
 0
-# Cordinate boundaries if degree (west / south / east / north) 
+# Coordinate boundaries if degree (west / south / east / north)
 0.0 0.0 0.0 0.0
-# Optimization method (1: CPSO, 2: DE) 
+# Optimization method (1: CPSO, 2: DE)
 2
-# Population size 
+# Population size
 20
-# Maximum number of iterations 
+# Maximum number of iterations
 100
-# CPSO parameters (omega / phi) 
+# CPSO parameters (omega / phi)
 0.3 1.0
-# DE parameters (CR / F) 
+# DE parameters (CR / F)
 0.1 0.5
-# Output directory 
+# Output directory
 "./output/"
 # Compute PDF
 0
-# Number of threads 
+# Number of threads
 8

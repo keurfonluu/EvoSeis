@@ -27,8 +27,9 @@ module evoseis
   use omp_lib
   use forlab, only: IPRE, RPRE, File, horzcat, interp3, linspace, &
     deg2utm, utm2deg, datenum, datestr
+  use fftpack, only: fft, ifft
   use optimizers, only: optifit, optifunc, cpso, de
-  
+
 !=======================================================================
 ! Object Location
 !=======================================================================
@@ -37,17 +38,17 @@ module evoseis
     ! Coordinates (in meters)
     real(kind = RPRE), public :: x, y, z
   end type Location
-  
+
   interface Location
     module procedure init_Location
   end interface Location
   public :: Location
   private :: init_Location
-  
+
 !=======================================================================
 ! Object Hypocenter
 !=======================================================================
-  
+
   type, extends(Location) :: Hypocenter
     ! Event ID
     integer(kind = IPRE), public :: eventid
@@ -63,22 +64,22 @@ module evoseis
   end interface Hypocenter
   public :: Hypocenter
   private :: init_Hypocenter
-  
+
 !=======================================================================
 ! Object Source
 !=======================================================================
-  
+
   type, extends(Hypocenter) :: Source
     ! Moment tensor
     real(kind = RPRE), dimension(:), allocatable, public :: moment_tensor
   end type Source
-  
+
   interface Source
     module procedure init_Source
   end interface Source
   public :: Source
   private :: init_Source
-  
+
 !=======================================================================
 ! Object Cluster
 !=======================================================================
@@ -93,13 +94,13 @@ module evoseis
     generic, public :: locate => locate_cluster
     procedure, public, pass :: convert_to_latlon, savehypo
   end type Cluster
-  
+
   interface Cluster
     module procedure init_Cluster
   end interface Cluster
   public :: Cluster
   private :: init_Cluster
-  
+
 !=======================================================================
 ! Object Station
 !=======================================================================
@@ -114,13 +115,13 @@ module evoseis
   contains
     procedure, public, pass :: compute_ttgrid, get_ttime
   end type Station
-  
+
   interface Station
     module procedure init_Station
   end interface Station
   public :: Station
   private :: init_Station
-  
+
 !=======================================================================
 ! Object Network
 !=======================================================================
@@ -135,13 +136,13 @@ module evoseis
   contains
     procedure, public, pass :: compute_ttgrids, zshift, convert_to_utm
   end type Network
-  
+
   interface Network
     module procedure init_Network
   end interface Network
   public :: Network
   private :: init_Network
-  
+
 !=======================================================================
 ! Object Vel3D
 !=======================================================================
@@ -154,13 +155,13 @@ module evoseis
     ! Mesh size (in meters)
     real(kind = RPRE), public :: dx, dy, dz
   end type Vel3D
-  
+
   interface Vel3D
     module procedure init_Vel3D
   end interface Vel3D
   public :: Vel3D
   private :: init_Vel3D
-  
+
 contains
 
 !=======================================================================
@@ -169,22 +170,22 @@ contains
 
   type(Location) function init_Location(x, y, z)
     real(kind = RPRE), intent(in) :: x, y, z
-    
+
     init_Location % x = x
     init_Location % y = y
     init_Location % z = z
     return
   end function init_Location
-  
+
 !=======================================================================
 ! Object Hypocenter methods
 !=======================================================================
-  
+
   type(Hypocenter) function init_Hypocenter(x, y, z, eventid, origin_time)
     integer(kind = IPRE), intent(in), optional :: eventid
     real(kind = RPRE), intent(in), optional :: x, y, z
     real(kind = 8), intent(in), optional :: origin_time
-    
+
     if (present(x)) init_Hypocenter % x = x
     if (present(y)) init_Hypocenter % y = y
     if (present(z)) init_Hypocenter % z = z
@@ -192,9 +193,9 @@ contains
     if (present(origin_time)) init_Hypocenter % origin_time = origin_time
     return
   end function init_Hypocenter
-  
+
   subroutine locate_hypo(self, velp, vels, ntwrk, method, np, itermax, par, fit)
-    
+
     ! Input arguments
     !=================
     class(Hypocenter), intent(inout) :: self
@@ -203,7 +204,7 @@ contains
     integer(kind = IPRE), intent(in), optional :: method, np, itermax
     real(kind = RPRE), intent(in), optional :: par(2)
     real(kind = RPRE), intent(inout), optional :: fit
-    
+
     ! Local variables
     !=================
     integer(kind = IPRE) :: i, opt_method, opt_np, opt_itermax, niter, flag
@@ -213,7 +214,7 @@ contains
     real(kind = RPRE), dimension(:), allocatable :: tcalcp, tcalcs
     real(kind = RPRE), dimension(:), allocatable :: loc
     procedure(optifunc), pointer :: costfunc => null()
-    
+
     ! Global variables to transfer to the cost function
     !===================================================
     integer(kind = IPRE), save :: nstat
@@ -223,7 +224,7 @@ contains
     logical, dimension(:), allocatable, save :: maskp, masks
     type(Vel3D), pointer, save :: velp_ptr, vels_ptr
     type(Network), pointer, save :: ntwrk_ptr
-    
+
     ! Optional arguments default values
     !===================================
     opt_method = 2              ! Method (1: CPSO, 2: DE)
@@ -232,7 +233,7 @@ contains
     if (present(method)) opt_method = method
     if (present(np)) opt_np = np
     if (present(itermax)) opt_itermax = itermax
-    
+
     ! Retrieve arrival times associated to the current hypocenter
     !=============================================================
     nstat = size(ntwrk % stations)
@@ -242,7 +243,7 @@ contains
     sigmas = [ ( ntwrk % stations(i) % uncertainties(self % eventid,2), i = 1, nstat ) ]
     maskp = tobsp .gt. 0.0d0
     masks = tobss .gt. 0.0d0
-    
+
     ! Remove the weighted mean from the observed arrival times
     !==========================================================
     allocate(tobsp_tild(nstat), tobss_tild(nstat))
@@ -264,40 +265,40 @@ contains
     eps1 = 1.0d-4
     eps2 = -1.0d+8
     eps3 = 1.0d-4
-    
+
     ! Set pointers (not to allocate too much)
     !=========================================
     velp_ptr => velp
     vels_ptr => vels
     ntwrk_ptr => ntwrk
-    
+
     ! Locate
     !========
     select case(method)
-    
+
       ! Competitive PSO
       !=================
       case(1)
         opt_par = [ 0.7, 1.5 ]
         if (present(par)) opt_par = par
-        
+
         loc = cpso(costfunc, xl, xu, np = opt_np, itermax = opt_itermax, &
                    w = opt_par(1), phi1 = opt_par(2), phi2 = opt_par(2), &
                    alpha = real(1.25, RPRE), eps1 = eps1, eps2 = eps2, eps3 = eps3, &
                    fit = opt_fit, niter = niter, flag = flag, snap = .false.)
-                   
+
       ! Differential Evolution
       !========================
       case(2)
         opt_par = [ 0.1, 0.5 ]
         if (present(par)) opt_par = par
-        
+
         loc = de(costfunc, xl, xu, np = opt_np, itermax = opt_itermax, &
                  CR = opt_par(1), F = opt_par(2), eps1 = eps1, eps2 = eps2, &
                  fit = opt_fit, niter = niter, flag = flag, snap = .false.)
-      
+
     end select
-    
+
     ! Compute origin time
     !=====================
     allocate(tcalcp(nstat), tcalcs(nstat))
@@ -308,25 +309,25 @@ contains
       tcalcs(k) = ntwrk % stations(k) % get_ttime(vels, loc(1), loc(2), loc(3), 2)
     end do
     !$omp end parallel
-    
+
     t0 = sum((dble(tobsp) - dble(tcalcp)) / dble(sigmap)**2, maskp) &
          + sum((dble(tobss) - dble(tcalcs)) / dble(sigmas)**2, masks)
     t0 = t0 / ( sum(1.0d0 / dble(sigmap)**2, maskp) &
                 + sum(1.0d0 / dble(sigmas)**2, masks) )
-    
+
     ! Update hypocenter
     !===================
     self % x = loc(1)
     self % y = loc(2)
     self % z = loc(3)
     self % origin_time = t0
-    
+
     if (present(fit)) fit = opt_fit
     deallocate(tobsp_tild, tobss_tild)
     return
-    
+
   contains
-    
+
   !---------------------------------------------------------------------
   ! Function bayfunc
   !---------------------------------------------------------------------
@@ -336,7 +337,7 @@ contains
       real(kind = RPRE) :: tcalc_sum, tcalc_mean
       real(kind = RPRE), dimension(:), allocatable :: tcalcp, tcalcs, &
         tcalcp_tild, tcalcs_tild
-      
+
       ! Compute traveltimes for each station
       !======================================
       allocate(tcalcp(nstat), tcalcs(nstat))
@@ -347,7 +348,7 @@ contains
         tcalcs(k) = ntwrk_ptr % stations(k) % get_ttime(vels_ptr, x(1), x(2), x(3), 2)
       end do
       !$omp end parallel
-      
+
       ! Remove the weighted mean
       !==========================
       allocate(tcalcp_tild(nstat), tcalcs_tild(nstat))
@@ -356,7 +357,7 @@ contains
       tcalc_mean = tcalc_sum/sigma_sum
       tcalcp_tild = merge(tcalcp - tcalc_mean, real(-5d-3, RPRE), maskp)
       tcalcs_tild = merge(tcalcs - tcalc_mean, real(-5d-3, RPRE), masks)
-      
+
       ! Compute cost function
       !=======================
       bayfunc % val = sum((tobsp_tild - tcalcp_tild)**2/sigmap**2, mask = maskp) &
@@ -364,7 +365,7 @@ contains
       bayfunc % val = 0.5d0 * bayfunc % val
       return
     end function bayfunc
-    
+
   !---------------------------------------------------------------------
   ! Function edtfunc
   !---------------------------------------------------------------------
@@ -376,7 +377,7 @@ contains
       real(kind = RPRE) :: tcalc_sum, tcalc_mean
       real(kind = RPRE), dimension(:), allocatable :: tcalcp, tcalcs, &
         tcalcp_tild, tcalcs_tild, sigmap_edt, sigmas_edt
-      
+
       ! Compute traveltimes for each station
       !======================================
       allocate(tcalcp(nstat), tcalcs(nstat))
@@ -387,7 +388,7 @@ contains
         tcalcs(k) = ntwrk_ptr % stations(k) % get_ttime(vels_ptr, x(1), x(2), x(3), 2)
       end do
       !$omp end parallel
-      
+
       ! Compute cost function
       !=======================
       edtfunc % val = 0.0d0
@@ -416,19 +417,19 @@ contains
       edtfunc % val = - edtfunc % val
       return
     end function edtfunc
-    
+
   end subroutine locate_hypo
-  
+
 !=======================================================================
 ! Object Source methods
 !=======================================================================
-  
+
   type(Source) function init_Source(x, y, z, eventid, origin_time, moment_tensor)
     integer(kind = IPRE), intent(in), optional :: eventid
     real(kind = RPRE), intent(in), optional :: x, y, z
     real(kind = 8), intent(in), optional :: origin_time
     real(kind = RPRE), dimension(:), intent(in), optional :: moment_tensor
-    
+
     if (present(x)) init_Source % x = x
     if (present(y)) init_Source % y = y
     if (present(z)) init_Source % z = z
@@ -437,7 +438,7 @@ contains
     if (present(moment_tensor)) init_Source % moment_tensor = moment_tensor
     return
   end function init_Source
-  
+
 !=======================================================================
 ! Object Cluster methods
 !=======================================================================
@@ -448,7 +449,7 @@ contains
     integer(kind = IPRE), dimension(:), intent(in), optional :: EID
     real(kind = RPRE), dimension(:,:), intent(in), optional :: MT
     integer(kind = IPRE) :: j
-    
+
     init_Cluster % nsrc = nsrc
     allocate(init_Cluster % sources(nsrc))
     if (present(X)) init_Cluster % sources(:) % x = X
@@ -463,9 +464,9 @@ contains
     end if
     return
   end function init_Cluster
-  
+
   subroutine locate_cluster(self, velp, vels, ntwrk, method, np, itermax, par, fit)
-  
+
     ! Input arguments
     !=================
     class(Cluster), intent(inout) :: self
@@ -474,13 +475,13 @@ contains
     integer(kind = IPRE), intent(in), optional :: method, np, itermax
     real(kind = RPRE), intent(in), optional :: par(2)
     real(kind = RPRE), intent(inout), optional :: fit
-    
+
     ! Local variables
     !=================
     integer(kind = IPRE) :: opt_method, opt_np, opt_itermax
     real(kind = RPRE) :: opt_fit, opt_par(2)
     integer(kind = IPRE) :: j
-    
+
     ! Optional arguments default values
     !===================================
     opt_method = 2              ! Method (1: CPSO, 2: DE)
@@ -489,7 +490,7 @@ contains
     if (present(method)) opt_method = method
     if (present(np)) opt_np = np
     if (present(itermax)) opt_itermax = itermax
-    
+
     select case(opt_method)
       case(1)
         opt_par = [ 0.7, 1.5 ]
@@ -498,17 +499,17 @@ contains
         opt_par = [ 0.1, 0.5 ]
         if (present(par)) opt_par = par
     end select
-    
+
     do j = 1, self % nsrc
       call self % sources(j) % locate(velp, vels, ntwrk, &
                                       opt_method, opt_np, opt_itermax, &
                                       opt_par, opt_fit)
     end do
-    
+
     if (present(fit)) fit = opt_fit
     return
   end subroutine locate_cluster
-  
+
   subroutine convert_to_latlon(self, south, west)
     class(Cluster), intent(inout) :: self
     real(kind = RPRE), intent(in) :: south, west
@@ -518,7 +519,7 @@ contains
     integer(kind = IPRE), dimension(:), allocatable :: loc_zn
     real(kind = RPRE), dimension(:), allocatable :: loc_lat, loc_lon
     character(len = 1), dimension(:), allocatable :: loc_zl
-    
+
     call deg2utm(south, west, east0, north0, zn, zl)
     allocate(loc_zn(self % nsrc), loc_zl(self % nsrc))
     loc_zn = zn
@@ -531,14 +532,14 @@ contains
     self % sources(:) % y = loc_lon
     return
   end subroutine convert_to_latlon
-  
+
   subroutine savehypo(self, outfile, coord_unit, year, month, day)
     class(Cluster), intent(in) :: self
     character(len = *), intent(in) :: outfile
     integer(kind = IPRE), intent(in) :: coord_unit, year, month, day
     integer(kind = IPRE) :: j
     type(File) :: fout
-    
+
     fout = File(999, trim(outfile))
     call fout % open()
     select case(coord_unit)
@@ -608,7 +609,7 @@ contains
     real(kind = RPRE), dimension(:,:), intent(in) :: tobs
     real(kind = RPRE), dimension(:,:), intent(in), optional :: sigma
     real(kind = RPRE), dimension(:,:,:,:), intent(in), optional :: ttgrid
-    
+
     init_Station % x = x
     init_Station % y = y
     init_Station % z = z
@@ -617,7 +618,7 @@ contains
     if (present(ttgrid)) init_Station % ttgrid = ttgrid(:,:,:,:)
     return
   end function init_Station
-  
+
   subroutine compute_ttgrid(self, velp, vels, nsweep)
     class(Station), intent(inout) :: self
     type(Vel3D), intent(in) :: velp, vels
@@ -625,14 +626,14 @@ contains
     integer(kind = IPRE) :: opt_nsweep, nz, nx, ny
     real(kind = 4), dimension(:,:,:), allocatable :: tmp
     real(kind = RPRE), dimension(:,:,:,:), allocatable :: tt
-    
+
     opt_nsweep = 1
     if (present(nsweep)) opt_nsweep = nsweep
-    
+
     nz = velp % nz + 1
     nx = velp % nx + 1
     ny = velp % ny + 1
-    
+
     allocate(tmp(nz, nx, ny), tt(nz, nx, ny, 2))
     call FTeik3D_2(sngl(velp % model), tmp, nz, nx, ny, &
                    sngl(self % z), sngl(self % x), sngl(self % y), &
@@ -647,9 +648,9 @@ contains
     self % ttgrid = tt(:,:,:,:)
     return
   end subroutine compute_ttgrid
-  
+
   function get_ttime(self, vel, xq, yq, zq, phase) result(ttime)
-    
+
     ! Input arguments
     !=================
     real(kind = RPRE) :: ttime
@@ -657,22 +658,22 @@ contains
     type(Vel3D), intent(in) :: vel
     real(kind = RPRE), intent(in) :: xq, yq, zq
     integer(kind = IPRE), intent(in) :: phase
-    
+
     ! Local variables
     !=================
     integer(kind = IPRE) :: i, nz, nx, ny
     real(kind = RPRE), dimension(:), allocatable :: az, ax, ay
-    
+
     integer(kind = IPRE) :: zi(1), xi(1), yi(1), iz(8), ix(8), iy(8)
     real(kind = RPRE) :: z(2), x(2), y(2), ttr(2,2,2), v(2,2,2), d, dq
-    
+
     nz = vel % nz + 1
     nx = vel % nx + 1
     ny = vel % ny + 1
     az = linspace(0, (nz-1)*vel % dz, nz)
     ax = linspace(0, (nx-1)*vel % dx, nx)
     ay = linspace(0, (ny-1)*vel % dy, ny)
-    
+
     zi = min( minloc(zq - az, mask = zq .ge. az), nz-2 )
     xi = min( minloc(xq - ax, mask = xq .ge. ax), nx-2 )
     yi = min( minloc(yq - ay, mask = yq .ge. ay), ny-2 )
@@ -685,7 +686,7 @@ contains
     iz = [ 1, 2, 1, 2, 1, 2, 1, 2 ]
     ix = [ 1, 1, 2, 2, 1, 1, 2, 2 ]
     iy = [ 1, 1, 1, 1, 2, 2, 2, 2 ]
-    
+
     ttr = self % ttgrid(zi(1):zi(1) + 1, xi(1):xi(1) + 1, yi(1):yi(1) + 1, phase)
     dq = sqrt((self % x - xq)**2 &
               + (self % y - yq)**2 &
@@ -699,7 +700,7 @@ contains
     ttime = dq / interp3(z, x, y, v, zq, xq, yq)
     return
   end function get_ttime
-  
+
 !=======================================================================
 ! Object Network methods
 !=======================================================================
@@ -712,16 +713,16 @@ contains
     integer(kind = IPRE) :: k, nstat, nobs, nev
     real(kind = RPRE), dimension(:,:), allocatable :: tobsp, tobss, &
       sigmap, sigmas
-    
+
     nstat = size(X)
     nobs = size(tobs, 1)
     nev = nobs / nstat
     init_Network % nstat = nstat
     allocate(init_Network % stations(nstat))
-    
+
     tobsp = reshape(tobs(:,1), [ nstat, nev ])
     tobss = reshape(tobs(:,2), [ nstat, nev ])
-    
+
     do k = 1, nstat
       init_Network % stations(k) = Station(X(k), Y(k), Z(k), &
                                            horzcat(tobsp(k,:), tobss(k,:)))
@@ -736,12 +737,12 @@ contains
     end do
     return
   end function init_Network
-  
+
   subroutine compute_ttgrids(self, velp, vels)
     class(Network), intent(inout) :: self
     type(Vel3D), intent(in) :: velp, vels
     integer(kind = IPRE) :: k
-    
+
     !$omp parallel default(shared)
     !$omp do schedule(runtime)
     do k = 1, self % nstat
@@ -750,20 +751,20 @@ contains
     !$omp end parallel
     return
   end subroutine compute_ttgrids
-  
+
   subroutine zshift(self, zs, nsh, nz, dz)
     class(Network), intent(inout) :: self
     real(kind = RPRE), intent(out) :: zs
     integer(kind = IPRE), intent(inout) :: nz, nsh
     real(kind = RPRE), intent(in) :: dz
-    
+
     nsh = ceiling( maxval(self % stations(:) % z) / dz )
     nz = nz + nsh
     zs = nsh * dz
     if ( zs .gt. 0.0d0 ) self % stations(:) % z = -self % stations(:) % z + zs
     return
   end subroutine zshift
-  
+
   subroutine convert_to_utm(self, south, west)
     class(Network), intent(inout) :: self
     real(kind = RPRE), intent(in) :: south, west
@@ -773,7 +774,7 @@ contains
     integer(kind = IPRE), dimension(:), allocatable :: stat_zn
     real(kind = RPRE), dimension(:), allocatable :: stat_east, stat_north
     character(len = 1), dimension(:), allocatable :: stat_zl
-    
+
     call deg2utm(south, west, east0, north0, zn, zl)
     call deg2utm(self % stations(:) % x, self % stations(:) % y, &
                  stat_east, stat_north, stat_zn, stat_zl)
@@ -781,15 +782,15 @@ contains
     self % stations(:) % y = stat_north - north0
     return
   end subroutine convert_to_utm
-  
+
 !=======================================================================
 ! Object Vel3D methods
 !=======================================================================
-  
+
   type(Vel3D) function init_Vel3D(model, dx, dy, dz)
     real(kind = RPRE), dimension(:,:,:), target, intent(in) :: model
     real(kind = RPRE), intent(in) :: dx, dy, dz
-    
+
     init_Vel3D % model => model
     init_Vel3D % dx = dx
     init_Vel3D % dy = dy
