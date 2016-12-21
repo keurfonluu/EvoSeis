@@ -1076,14 +1076,14 @@ class evolocGUI():
         self.dz.set(tmp[0])
         self.dx.set(tmp[1])
         self.dy.set(tmp[2])
-        tmp = par[5].split("\n")[0][1:-1]
+        tmp = par[5].split("\n")[0][1:-1].replace('"', "")
         self.velp_filename.set(tmp)
-        tmp = par[7].split("\n")[0][1:-1]
+        tmp = par[7].split("\n")[0][1:-1].replace('"', "")
         self.vels_filename.set(tmp)
 
-        tmp = par[9].split("\n")[0][1:-1]
+        tmp = par[9].split("\n")[0][1:-1].replace('"', "")
         self.stat_filename.set(tmp)
-        tmp = par[11].split("\n")[0][1:-1]
+        tmp = par[11].split("\n")[0][1:-1].replace('"', "")
         self.tobs_filename.set(tmp)
         tmp = [ int(each) for each in par[13].split() ]
         if tmp == [ 0, 0, 0 ]:
@@ -1098,7 +1098,7 @@ class evolocGUI():
 
         tmp = bool(int(par[17].split()[0]))
         self.do_bayesh.set(tmp)
-        tmp = par[19].split("\n")[0][1:-1]
+        tmp = par[19].split("\n")[0][1:-1].replace('"', "")
         self.sigma_filename.set(tmp)
         tmp = [ float(each) for each in par[21].split() ]
         self.spmin.set(tmp[0])
@@ -1128,13 +1128,13 @@ class evolocGUI():
         self.CR.set(tmp[0])
         self.F.set(tmp[1])
 
-        tmp = par[39].split("\n")[0][1:-1]
+        tmp = par[39].split("\n")[0][1:-1].replace('"', "")
         self.outdir.set(tmp)
         tmp = int(par[41].split()[0])
         self.pdf.set(tmp)
 
         tmp = int(par[43].split()[0])
-        self.num_threads.set(tmp)
+        self.num_threads.set(min(tmp, multiprocessing.cpu_count()))
 
     # Function init_figure
     #======================
